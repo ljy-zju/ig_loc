@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(ig_lio)
+project(ig_loc)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -47,7 +47,7 @@ include_directories(SYSTEM
 )
 
 add_executable(${PROJECT_NAME}_node 
-  src/ig_lio_node
+  src/ig_loc_node.cpp
   src/pointcloud_preprocess.cpp
   src/lio.cpp
   src/voxel_map.cpp

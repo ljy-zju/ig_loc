@@ -1,18 +1,18 @@
 #ifndef TIMER_H_
 #define TIMER_H_
 
-#include <glog/logging.h>
 #include <chrono>
 #include <fstream>
+#include <glog/logging.h>
 #include <map>
 #include <numeric>
 #include <string>
 
 class Timer {
- public:
+public:
   struct TimerRecord {
     TimerRecord() = default;
-    TimerRecord(const std::string& name, double time_usage) {
+    TimerRecord(const std::string &name, double time_usage) {
       func_name_ = name;
       time_usage_in_ms_.emplace_back(time_usage);
     }
@@ -20,8 +20,7 @@ class Timer {
     std::vector<double> time_usage_in_ms_;
   };
 
-  template <class F>
-  void Evaluate(F&& func, const std::string& func_name) {
+  template <class F> void Evaluate(F &&func, const std::string &func_name) {
     auto t1 = std::chrono::high_resolution_clock::now();
     std::forward<F>(func)();
     auto t2 = std::chrono::high_resolution_clock::now();
@@ -41,7 +40,7 @@ class Timer {
   /// clean the records
   void Clear() { records_.clear(); }
 
- private:
+private:
   std::map<std::string, TimerRecord> records_;
 };
 

@@ -2,6 +2,7 @@
 #include <fstream>
 #include <mutex>
 
+#include <boost/filesystem.hpp>
 #include <geometry_msgs/PoseStamped.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
@@ -9,14 +10,13 @@
 #include <ros/ros.h>
 #include <sensor_msgs/Imu.h>
 #include <tf/transform_broadcaster.h>
-#include <boost/filesystem.hpp>
 
 #include <pcl/filters/voxel_grid.h>
 
-#include "ig_lio/lio.h"
-#include "ig_lio/logger.hpp"
-#include "ig_lio/pointcloud_preprocess.h"
-#include "ig_lio/timer.h"
+#include "ig_loc/lio.h"
+#include "ig_loc/logger.hpp"
+#include "ig_loc/pointcloud_preprocess.h"
+#include "ig_loc/timer.h"
 
 namespace fs = boost::filesystem;
 
@@ -45,6 +45,8 @@ ros::Publisher current_scan_pub;
 ros::Publisher keyframe_scan_pub;
 ros::Publisher path_pub;
 nav_msgs::Path path_array;
+ros::Publisher prior_map_pub;
+sensor_msgs::PointCloud2 prior_map_msg;
 
 Timer timer;
 std::shared_ptr<PointCloudPreprocess> cloud_preprocess_ptr;
@@ -53,7 +55,10 @@ std::shared_ptr<LIO> lio_ptr;
 pcl::VoxelGrid<PointType> voxel_filter;
 std::fstream odom_stream;
 
-void ImuCallBack(const sensor_msgs::Imu::ConstPtr& msg_ptr) {
+bool FLAG_EXIT = false;
+LIO::Config lio_config;
+
+void ImuCallBack(const sensor_msgs::Imu::ConstPtr &msg_ptr) {
   static double last_imu_timestamp = 0.0;
   static sensor_msgs::Imu last_imu = *msg_ptr;
   // parameters for EMA filter
@@ -98,7 +103,7 @@ void ImuCallBack(const sensor_msgs::Imu::ConstPtr& msg_ptr) {
 }
 
 // process Velodyne and Outser
-void CloudCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
+void CloudCallBack(const sensor_msgs::PointCloud2::ConstPtr &msg) {
   static double last_lidar_timestamp = 0.0;
   timer.Evaluate(
       [&]() {
@@ -126,7 +131,7 @@ void CloudCallBack(const sensor_msgs::PointCloud2::ConstPtr& msg) {
 }
 
 // process livox
-void LivoxCloudCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) {
+void LivoxCloudCallBack(const livox_ros_driver::CustomMsg::ConstPtr &msg) {
   static double last_lidar_timestamp = 0.0;
   static CloudPtr temp_cloud_ptr(new CloudType());
   static bool first_scan_flag = true;
@@ -177,8 +182,8 @@ void LivoxCloudCallBack(const livox_ros_driver::CustomMsg::ConstPtr& msg) {
             first_scan_flag = false;
           }
 
-          cloud_preprocess_ptr->Process(
-              msg, temp_cloud_ptr, first_scan_timestamp);
+          cloud_preprocess_ptr->Process(msg, temp_cloud_ptr,
+                                        first_scan_timestamp);
 
           first_scan_flag = true;
           last_lidar_timestamp = lidar_timestamp;
@@ -209,9 +214,8 @@ bool SyncMeasurements() {
     if (!process_lidar) {
       CloudPtr cloud_sort(new CloudType());
       *cloud_sort = *cloud_buff.front().second;
-      std::sort(cloud_sort->points.begin(),
-                cloud_sort->points.end(),
-                [](const PointType& x, const PointType& y) -> bool {
+      std::sort(cloud_sort->points.begin(), cloud_sort->points.end(),
+                [](const PointType &x, const PointType &y) -> bool {
                   return (x.curvature < y.curvature);
                 });
       local_sensor_measurement.cloud_ptr_ = cloud_sort;
@@ -357,6 +361,22 @@ bool SyncMeasurements() {
   return true;
 }
 
+void LoadPriorMap(const std::string &load_path) {
+  pcl::PointCloud<PointType>::Ptr prior_map(new pcl::PointCloud<PointType>());
+  pcl::io::loadPCDFile<PointType>(load_path, *prior_map);
+
+  // check the map points number
+  LOG(INFO) << "Prior map has " << prior_map->size() << " points." << std::endl;
+
+  // trans the prior map to voxel map
+  lio_ptr->SetPriorMap(prior_map);
+
+  // visualize it
+  voxel_filter.setInputCloud(prior_map);
+  voxel_filter.filter(*prior_map);
+  pcl::toROSMsg(*prior_map, prior_map_msg);
+  prior_map_msg.header.frame_id = "world";
+}
 // The main process of iG-LIO
 void Process() {
   // Step 1: Time synchronization
@@ -373,6 +393,20 @@ void Process() {
       lio_ptr->StaticInitialization(sensor_measurement);
     }
     return;
+  }
+
+  // 只在外参init_ok是true的时候做，且只做一次，把先验地图变换到惯性系下再存储到Voxelmap里
+  static bool prior_map_loaded = false;
+  if (lio_config.init_ok) {
+    if (!prior_map_loaded) {
+      prior_map_loaded = true;
+      // read prior map
+      if (!lio_config.prior_map_path.empty()) {
+        LoadPriorMap(lio_config.prior_map_path);
+      }
+    }
+  } else {
+    FLAG_EXIT = true;
   }
 
   // Step 3: Prediction
@@ -434,8 +468,8 @@ void Process() {
       tf::Transform(q_tf, t_tf), odom_msg.header.stamp, "world", "base_link"));
   // publish dense scan
   CloudPtr trans_cloud(new CloudType());
-  pcl::transformPointCloud(
-      *sensor_measurement.cloud_ptr_, *trans_cloud, result_pose);
+  pcl::transformPointCloud(*sensor_measurement.cloud_ptr_, *trans_cloud,
+                           result_pose);
   sensor_msgs::PointCloud2 scan_msg;
   pcl::toROSMsg(*trans_cloud, scan_msg);
   scan_msg.header.frame_id = "world";
@@ -465,6 +499,15 @@ void Process() {
     keyframe_scan_msg.header.stamp =
         ros::Time(sensor_measurement.lidar_end_time_);
     keyframe_scan_pub.publish(keyframe_scan_msg);
+
+    // publish prior map just 10 times
+    static int pub_prior_times = 5;
+    if (pub_prior_times > 0) {
+      pub_prior_times--;
+      prior_map_msg.header.stamp =
+          ros::Time().fromSec(sensor_measurement.lidar_end_time_);
+      prior_map_pub.publish(prior_map_msg);
+    }
 
     // publich path
     path_array.header.stamp = ros::Time(sensor_measurement.lidar_end_time_);
@@ -529,17 +572,16 @@ void Process() {
   }
 }
 
-bool FLAG_EXIT = false;
 void SigHandle(int sig) {
   FLAG_EXIT = true;
   ROS_WARN("catch sig %d", sig);
 }
 
-int main(int argc, char** argv) {
-  ros::init(argc, argv, "ig_lio_node");
+int main(int argc, char **argv) {
+  ros::init(argc, argv, "ig_loc_node");
   ros::NodeHandle nh;
 
-  std::string package_path = ros::package::getPath("ig_lio");
+  std::string package_path = ros::package::getPath("ig_loc");
   Logger logger(argc, argv, package_path);
 
   // init topic
@@ -557,6 +599,8 @@ int main(int argc, char** argv) {
     lidar_type = LidarType::OUSTER;
   } else if (lidar_type_string == "livox") {
     lidar_type = LidarType::LIVOX;
+  } else if (lidar_type_string == "hesai") {
+    lidar_type = LidarType::HESAI;
   } else {
     LOG(ERROR) << "erro lidar type!";
     exit(0);
@@ -607,8 +651,8 @@ int main(int argc, char** argv) {
   double point2plane_constraints_gain;
   bool enable_outlier_rejection;
   nh.param<double>("gicp_constraints_gain", gicp_constraints_gain, 1.0);
-  nh.param<double>(
-      "point2plane_constraints_gain", point2plane_constraints_gain, 1.0);
+  nh.param<double>("point2plane_constraints_gain", point2plane_constraints_gain,
+                   1.0);
   nh.param<bool>("enable_undistort", enable_undistort, true);
   nh.param<bool>("enable_outlier_rejection", enable_outlier_rejection, false);
   nh.param<bool>("enable_acc_correct", enable_acc_correct, false);
@@ -647,19 +691,18 @@ int main(int argc, char** argv) {
   T_imu_lidar = Eigen::Matrix4d::Identity();
   std::vector<double> t_imu_lidar_v;
   std::vector<double> R_imu_lidar_v;
-  nh.param<std::vector<double>>(
-      "t_imu_lidar", t_imu_lidar_v, std::vector<double>());
+  nh.param<std::vector<double>>("t_imu_lidar", t_imu_lidar_v,
+                                std::vector<double>());
   T_imu_lidar.block<3, 1>(0, 3) =
       Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(
           t_imu_lidar_v.data(), 3, 1);
-  nh.param<std::vector<double>>(
-      "R_imu_lidar", R_imu_lidar_v, std::vector<double>());
+  nh.param<std::vector<double>>("R_imu_lidar", R_imu_lidar_v,
+                                std::vector<double>());
   T_imu_lidar.block<3, 3>(0, 0) =
       Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(
           R_imu_lidar_v.data(), 3, 3);
   LOG(INFO) << "Extrinsic: " << std::endl << T_imu_lidar << std::endl;
 
-  LIO::Config lio_config;
   lio_config.acc_cov = acc_cov;
   lio_config.gyr_cov = gyr_cov;
   lio_config.ba_cov = ba_cov;
@@ -684,6 +727,19 @@ int main(int argc, char** argv) {
 
   lio_config.T_imu_lidar = T_imu_lidar;
 
+  nh.param<std::string>("save_path", lio_config.save_path,
+                        "/fdisk/iomapping_result/default_path");
+  nh.param<std::string>("prior_map_path", lio_config.prior_map_path, "");
+  nh.param<bool>("init_ok", lio_config.init_ok, false);
+  // en_map_update
+  nh.param<bool>("en_map_update", lio_config.en_map_update, false);
+
+  // check the dir exist
+  if (!fs::exists(lio_config.save_path)) {
+    // create the dir
+    fs::create_directories(lio_config.save_path);
+  }
+
   lio_ptr = std::make_shared<LIO>(lio_config);
 
   // init ros topic
@@ -693,19 +749,46 @@ int main(int argc, char** argv) {
   keyframe_scan_pub =
       nh.advertise<sensor_msgs::PointCloud2>("keyframe_scan", 10000);
   path_pub = nh.advertise<nav_msgs::Path>("/path", 10000, true);
+  prior_map_pub = nh.advertise<sensor_msgs::PointCloud2>("prior_map", 10000);
 
   voxel_filter.setLeafSize(0.5, 0.5, 0.5);
 
   // save trajectory
   fs::path result_path = fs::path(package_path) / "result" / "lio_odom.txt";
   if (!fs::exists(result_path.parent_path())) {
-    fs::create_directories(result_path.parent_path());	
+    fs::create_directories(result_path.parent_path());
   }
 
   odom_stream.open(result_path, std::ios::out);
   if (!odom_stream.is_open()) {
     LOG(ERROR) << "failed to open: " << result_path;
     exit(0);
+  }
+
+  // read init pose
+  if (lio_config.init_ok) {
+    Eigen::Matrix4d T_init_pose = Eigen::Matrix4d::Identity();
+    std::vector<double> t_init_pose_v;
+    std::vector<double> R_init_pose_v;
+    nh.param<std::vector<double>>("t_init", t_init_pose_v,
+                                  std::vector<double>());
+    T_init_pose.block<3, 1>(0, 3) =
+        Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(
+            t_init_pose_v.data(), 3, 1);
+    nh.param<std::vector<double>>("R_init", R_init_pose_v,
+                                  std::vector<double>());
+
+    // 这将确保 R 是正交的
+    Eigen::Matrix3d R =
+        Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(
+            R_init_pose_v.data(), 3, 3);
+    Eigen::JacobiSVD<Eigen::MatrixXd> svd(R, Eigen::ComputeThinU |
+                                                 Eigen::ComputeThinV);
+    R = svd.matrixU() * svd.matrixV().transpose();
+
+    T_init_pose.block<3, 3>(0, 0) = R;
+    LOG(INFO) << "Init Pose: " << std::endl << T_init_pose << std::endl;
+    lio_ptr->SetInitPose(T_init_pose);
   }
 
   // run !!!

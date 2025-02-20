@@ -18,7 +18,7 @@
 
 #include "point_type.h"
 
-enum class LidarType { LIVOX, VELODYNE, OUSTER };
+enum class LidarType { LIVOX, VELODYNE, OUSTER, HESAI };
 
 // for Velodyne LiDAR
 struct VelodynePointXYZIRT {
@@ -30,8 +30,9 @@ struct VelodynePointXYZIRT {
 } EIGEN_ALIGN16;
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     VelodynePointXYZIRT,
-    (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
-        uint16_t, ring, ring)(float, time, time))
+    (float, x, x)(float, y, y)(float, z, z)(float, intensity,
+                                            intensity)(uint16_t, ring,
+                                                       ring)(float, time, time))
 
 // for Ouster LiDAR
 struct OusterPointXYZIRT {
@@ -49,6 +50,19 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
     (float, x, x)(float, y, y)(float, z, z)(float, intensity, intensity)(
         uint32_t, t, t)(uint16_t, reflectivity, reflectivity)(
         uint8_t, ring, ring)(uint16_t, noise, noise)(uint32_t, range, range))
+
+struct HesaiPointXYZIRT {
+  PCL_ADD_POINT4D
+  PCL_ADD_INTENSITY;
+  // std::uint16_t ring;
+  double timestamp; // 每个点均为绝对时间
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT(HesaiPointXYZIRT,
+                                  (float, x, x)(float, y, y)(float, z, z)(
+                                      float, intensity,
+                                      intensity)(double, timestamp, timestamp))
+
 // struct OusterPointXYZIRT {
 //   PCL_ADD_POINT4D;
 //   float intensity;
@@ -66,7 +80,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
 //         uint8_t, ring, ring)(uint16_t, noise, noise)(uint32_t, range, range))
 
 class PointCloudPreprocess {
- public:
+public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   struct Config {
     Config(){};
@@ -79,33 +93,32 @@ class PointCloudPreprocess {
 
   PointCloudPreprocess() = delete;
 
-  PointCloudPreprocess(Config config = Config())
-      : config_(config) {}
+  PointCloudPreprocess(Config config = Config()) : config_(config) {}
 
   ~PointCloudPreprocess() = default;
 
-  void Process(const livox_ros_driver::CustomMsg::ConstPtr& msg,
-               pcl::PointCloud<PointType>::Ptr& cloud_out,
+  void Process(const livox_ros_driver::CustomMsg::ConstPtr &msg,
+               pcl::PointCloud<PointType>::Ptr &cloud_out,
                const double last_start_time = 0.0);
 
-  void Process(const sensor_msgs::PointCloud2::ConstPtr& msg,
-               pcl::PointCloud<PointType>::Ptr& cloud_out);
+  void Process(const sensor_msgs::PointCloud2::ConstPtr &msg,
+               pcl::PointCloud<PointType>::Ptr &cloud_out);
 
- private:
-  template <typename T>
-  bool HasInf(const T& p);
+private:
+  template <typename T> bool HasInf(const T &p);
 
-  template <typename T>
-  bool HasNan(const T& p);
+  template <typename T> bool HasNan(const T &p);
 
-  template <typename T>
-  bool IsNear(const T& p1, const T& p2);
+  template <typename T> bool IsNear(const T &p1, const T &p2);
 
-  void ProcessVelodyne(const sensor_msgs::PointCloud2::ConstPtr& msg,
-                       pcl::PointCloud<PointType>::Ptr& cloud_out);
+  void ProcessVelodyne(const sensor_msgs::PointCloud2::ConstPtr &msg,
+                       pcl::PointCloud<PointType>::Ptr &cloud_out);
 
-  void ProcessOuster(const sensor_msgs::PointCloud2::ConstPtr& msg,
-                     pcl::PointCloud<PointType>::Ptr& cloud_out);
+  void ProcessOuster(const sensor_msgs::PointCloud2::ConstPtr &msg,
+                     pcl::PointCloud<PointType>::Ptr &cloud_out);
+
+  void ProcessHesai(const sensor_msgs::PointCloud2::ConstPtr &msg,
+                    pcl::PointCloud<PointType>::Ptr &cloud_out);
 
   int num_scans_ = 128;
   bool has_time_ = false;

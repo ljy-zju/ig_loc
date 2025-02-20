@@ -1,0 +1,7 @@
+<launch>
+    <rosparam command="load" file="$(find ig_loc)/config/fp_canteen.yaml" />
+
+    <node pkg="ig_loc" type="ig_loc_node" name="ig_loc_node" output="screen" />
+    
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find ig_loc)/rviz/lio_show.rviz" required="true" />
+</launch>

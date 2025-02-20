@@ -1,4 +1,4 @@
-#include "ig_lio/SymmetricEigenSolver.h"
+#include "ig_loc/SymmetricEigenSolver.h"
 
 SymmetricEigensolver3x3::SymmetricEigensolver3x3() {
   input_.setZero();
@@ -99,12 +99,9 @@ Eigen::Vector3d SymmetricEigensolver3x3::eigenvalues() { return evals_; }
 
 Eigen::Matrix3d SymmetricEigensolver3x3::eigenvectors() { return evecs_; }
 
-void SymmetricEigensolver3x3::computeEigenvector0(double a00,
-                                                  double a01,
-                                                  double a02,
-                                                  double a11,
-                                                  double a12,
-                                                  double a22,
+void SymmetricEigensolver3x3::computeEigenvector0(double a00, double a01,
+                                                  double a02, double a11,
+                                                  double a12, double a22,
                                                   int i0) {
   Eigen::Matrix3d row_mat;
   double eval0 = evals_(i0);
@@ -142,14 +139,10 @@ void SymmetricEigensolver3x3::computeEigenvector0(double a00,
   evecs_.col(i0) = rxr.row(imax) / sqrt(dmax);
 }
 
-void SymmetricEigensolver3x3::computeEigenvector1(double a00,
-                                                  double a01,
-                                                  double a02,
-                                                  double a11,
-                                                  double a12,
-                                                  double a22,
-                                                  int i0,
-                                                  int i1) {
+void SymmetricEigensolver3x3::computeEigenvector1(double a00, double a01,
+                                                  double a02, double a11,
+                                                  double a12, double a22,
+                                                  int i0, int i1) {
   Eigen::Vector3d u, v;
   Eigen::Vector3d evec0 = evecs_.col(i0);
 
@@ -188,8 +181,8 @@ void SymmetricEigensolver3x3::computeEigenvector1(double a00,
     double v_mult = (abs_m00 >= abs_m11) ? m00 : m01;
 
     bool res = fabs(u_mult) >= fabs(v_mult);
-    double* large = (res) ? &u_mult : &v_mult;
-    double* small = (res) ? &v_mult : &u_mult;
+    double *large = (res) ? &u_mult : &v_mult;
+    double *small = (res) ? &v_mult : &u_mult;
 
     *small /= (*large);
     *large = 1.0 / sqrt(1.0 + (*small) * (*small));
@@ -214,9 +207,9 @@ Eigen::Vector3d SymmetricEigensolver3x3::cross(Eigen::Vector3d u,
   return out;
 }
 
-void SymmetricEigensolver3x3::computeOrthogonalComplement(Eigen::Vector3d& w,
-                                                          Eigen::Vector3d& u,
-                                                          Eigen::Vector3d& v) {
+void SymmetricEigensolver3x3::computeOrthogonalComplement(Eigen::Vector3d &w,
+                                                          Eigen::Vector3d &u,
+                                                          Eigen::Vector3d &v) {
   bool c = (fabs(w(0)) > fabs(w(1)));
 
   double inv_length = (c) ? (1.0 / sqrt(w(0) * w(0) + w(2) * w(2)))

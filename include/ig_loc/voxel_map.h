@@ -22,10 +22,10 @@
 
 #include <Eigen/Core>
 
-#include "ig_lio/point_type.h"
+#include "ig_loc/point_type.h"
 
 struct Grid {
- public:
+public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Grid(size_t grid_max_points) { points_array_.reserve(2 * grid_max_points); }
 
@@ -41,37 +41,33 @@ struct Grid {
 };
 
 struct point_hash_idx {
- public:
+public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
   Eigen::Vector3d point_;
-  size_t hash_idx_;  //
+  size_t hash_idx_; //
 
   point_hash_idx() = default;
   point_hash_idx(Eigen::Vector3d point, size_t hash_idx)
-      : point_(point)
-      , hash_idx_(hash_idx) {}
+      : point_(point), hash_idx_(hash_idx) {}
 
-  bool operator<(const point_hash_idx& p) const {
+  bool operator<(const point_hash_idx &p) const {
     return (hash_idx_ < p.hash_idx_);
   }
 };
 
 // for KNN
 struct point_distance {
- public:
+public:
   point_distance() = default;
-  point_distance(const Eigen::Vector3d& point,
-                 const double distance,
+  point_distance(const Eigen::Vector3d &point, const double distance,
                  const size_t point_idx)
-      : point_(point)
-      , distance_(distance)
-      , point_idx_(point_idx) {}
+      : point_(point), distance_(distance), point_idx_(point_idx) {}
 
-  inline bool operator()(const point_distance& p1, const point_distance& p2) {
+  inline bool operator()(const point_distance &p1, const point_distance &p2) {
     return p1.distance_ < p2.distance_;
   }
 
-  inline bool operator<(const point_distance& rhs) {
+  inline bool operator<(const point_distance &rhs) {
     return distance_ < rhs.distance_;
   }
 
@@ -81,7 +77,7 @@ struct point_distance {
 };
 
 class VoxelMap {
- public:
+public:
   struct Config {
     Config(){};
 
@@ -96,24 +92,25 @@ class VoxelMap {
 
   VoxelMap(Config config = Config());
 
-  bool AddCloud(const CloudPtr& input_cloud_ptr);
+  bool AddCloud(const CloudPtr &input_cloud_ptr);
 
-  bool GetSurroundingGrids(const PointType& point, std::vector<size_t>& grids);
+  bool GetSurroundingGrids(const PointType &point, std::vector<size_t> &grids);
 
-  size_t ComputeHashIndex(const Eigen::Vector3d& point);
+  size_t ComputeHashIndex(const Eigen::Vector3d &point);
 
-  void ComputeCovariance(std::shared_ptr<Grid>& grid_ptr);
+  void ComputeCovariance(std::shared_ptr<Grid> &grid_ptr);
 
-  bool IsSameGrid(const Eigen::Vector3d& p1, const Eigen::Vector3d& p2);
+  bool IsSameGrid(const Eigen::Vector3d &p1, const Eigen::Vector3d &p2);
 
   bool GetCentroidAndCovariance(const size_t hash_idx,
-                                Eigen::Vector3d& centorid,
-                                Eigen::Matrix3d& cov);
+                                Eigen::Vector3d &centorid,
+                                Eigen::Matrix3d &cov);
 
-  bool KNNByCondition(const Eigen::Vector3d& point,
-                      const size_t K,
+  bool KNNByCondition(const Eigen::Vector3d &point, const size_t K,
                       const double range,
-                      std::vector<Eigen::Vector3d>& results);
+                      std::vector<Eigen::Vector3d> &results);
+
+  bool SetPriorMap(pcl::PointCloud<PointType>::Ptr prior_map_ptr);
 
   size_t GetVoxelMapSize() { return voxel_map_.size(); }
 

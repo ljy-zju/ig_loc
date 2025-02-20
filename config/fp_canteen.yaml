@@ -1,0 +1,54 @@
+lidar_topic: /os_cloud_node/points
+imu_topic: /stim300/imu/data_raw
+lidar_type: ouster # livox velodyne ouster
+min_radius: 0.5
+max_radius: 150.0
+point_filter_num: 10
+time_scale: 0.001 # nclt: 0.001 other: 1000.0
+enable_ahrs_initalization: false
+enable_acc_correct: false
+
+scan_resolution: 0.5
+voxel_map_resolution: 0.5
+max_iterations: 20
+
+acc_cov: 1.1501915187049582e-03
+gyr_cov: 5.084312924828687e-05
+ba_cov: 3.729854069064516e-05
+bg_cov: 6.509823412408377e-07
+
+gicp_constraints_gain: 100.0
+point2plane_constraints_gain: 1000.0
+enable_undistort: true
+enable_outlier_rejection: true
+
+# 0.0 for HK-Data20190117
+# 9.80665 for HK-Data20190426-2
+gravity: 9.80665
+init_ori_cov: 0.0001
+inti_pos_cov: 0.0001
+init_vel_cov: 100.0
+init_ba_cov: 0.000001
+init_bg_cov: 0.000001
+
+# fp
+t_imu_lidar : [-0.036897, 0.00787575, -0.0228079]
+R_imu_lidar : [0.9999765, -0.0023318, -0.0064528,
+               0.0022921,  0.9999785, -0.0061474,
+               0.0064670,  0.0061325,  0.9999603 ]
+
+# save first frame to get init pose by registration
+save_path: /fdisk/ig_loc_test_file/fp/canteen_day_init_pose
+
+# load prior map
+prior_map_path: /media/ljy/T9/datasets/fusionportable/canteen/merged_scan_005.pcd
+
+# init pose: from map 2 init odometry
+init_ok: true
+t_init: [-11.23150447, -11.44654296, 0.13042735]
+R_init: [0.93456829, -0.35572868, -0.00620054,
+         0.35566332, 0.93456469, -0.00965398,
+         0.00922851, 0.00681722, 0.99993435]
+
+# enable map update
+en_map_update: true

@@ -1,14 +1,15 @@
-#include "ig_lio/lio.h"
-#include "ig_lio/timer.h"
+#include "ig_loc/lio.h"
+#include "ig_loc/timer.h"
+#include <pcl/io/pcd_io.h>
 
 extern Timer timer;
 
-bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
+bool LIO::MeasurementUpdate(SensorMeasurement &sensor_measurement) {
   if (sensor_measurement.measurement_type_ == MeasurementType::LIDAR) {
     // range filter
     CloudPtr filtered_cloud_ptr(new CloudType());
     filtered_cloud_ptr->points.reserve(sensor_measurement.cloud_ptr_->size());
-    for (const auto& pt : sensor_measurement.cloud_ptr_->points) {
+    for (const auto &pt : sensor_measurement.cloud_ptr_->points) {
       if (InRadius(pt)) {
         filtered_cloud_ptr->points.emplace_back(pt);
       }
@@ -20,8 +21,7 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
           // transform scan from lidar's frame to imu's frame
           CloudPtr cloud_body_ptr(new CloudType());
           pcl::transformPointCloud(*sensor_measurement.cloud_ptr_,
-                                   *cloud_body_ptr,
-                                   config_.T_imu_lidar);
+                                   *cloud_body_ptr, config_.T_imu_lidar);
           sensor_measurement.cloud_ptr_ = std::move(cloud_body_ptr);
 
           // undistort
@@ -35,8 +35,8 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
 
     timer.Evaluate(
         [&, this]() {
-          fast_voxel_grid_ptr_->Filter(
-              sensor_measurement.cloud_ptr_, cloud_DS_ptr_, cloud_cov_ptr_);
+          fast_voxel_grid_ptr_->Filter(sensor_measurement.cloud_ptr_,
+                                       cloud_DS_ptr_, cloud_cov_ptr_);
         },
         "downsample");
   }
@@ -44,10 +44,11 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
   // Make sure the local map is dense enought to measurement update
   if (lidar_frame_count_ <= 10) {
     CloudPtr trans_cloud_ptr(new CloudType());
-    pcl::transformPointCloud(
-        *sensor_measurement.cloud_ptr_, *trans_cloud_ptr, curr_state_.pose);
+    pcl::transformPointCloud(*sensor_measurement.cloud_ptr_, *trans_cloud_ptr,
+                             curr_state_.pose);
     voxel_map_ptr_->AddCloud(trans_cloud_ptr);
     lidar_frame_count_++;
+    keyframe_count_++;
     return true;
   }
 
@@ -80,35 +81,37 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
   ComputeFinalCovariance(delta_x);
   prev_state_ = curr_state_;
 
-  timer.Evaluate(
-      [&, this]() {
-        if (lidar_frame_count_ < 10) {
-          CloudPtr trans_cloud_ptr(new CloudType());
-          pcl::transformPointCloud(*sensor_measurement.cloud_ptr_,
-                                   *trans_cloud_ptr,
-                                   curr_state_.pose);
-          voxel_map_ptr_->AddCloud(trans_cloud_ptr);
-
-          last_keyframe_pose_ = curr_state_.pose;
-        } else {
-          Eigen::Matrix4d delta_p =
-              last_keyframe_pose_.inverse() * curr_state_.pose;
-          // The keyframe strategy ensures an appropriate spatial pattern of the
-          // points in each voxel
-          if (effect_feat_num_ < 1000 ||
-              delta_p.block<3, 1>(0, 3).norm() > 0.5 ||
-              Sophus::SO3d(delta_p.block<3, 3>(0, 0)).log().norm() > 0.18) {
-            CloudPtr trans_cloud_DS_ptr(new CloudType());
-            pcl::transformPointCloud(
-                *cloud_DS_ptr_, *trans_cloud_DS_ptr, curr_state_.pose);
-            voxel_map_ptr_->AddCloud(trans_cloud_DS_ptr);
+  if (config_.en_map_update) {
+    timer.Evaluate(
+        [&, this]() {
+          if (lidar_frame_count_ < 20) {
+            CloudPtr trans_cloud_ptr(new CloudType());
+            pcl::transformPointCloud(*sensor_measurement.cloud_ptr_,
+                                     *trans_cloud_ptr, curr_state_.pose);
+            voxel_map_ptr_->AddCloud(trans_cloud_ptr);
 
             last_keyframe_pose_ = curr_state_.pose;
             keyframe_count_++;
+          } else {
+            Eigen::Matrix4d delta_p =
+                last_keyframe_pose_.inverse() * curr_state_.pose;
+            // The keyframe strategy ensures an appropriate spatial pattern of
+            // the points in each voxel
+            if (effect_feat_num_ < 1000 ||
+                delta_p.block<3, 1>(0, 3).norm() > 0.5 ||
+                Sophus::SO3d(delta_p.block<3, 3>(0, 0)).log().norm() > 0.18) {
+              CloudPtr trans_cloud_DS_ptr(new CloudType());
+              pcl::transformPointCloud(*cloud_DS_ptr_, *trans_cloud_DS_ptr,
+                                       curr_state_.pose);
+              voxel_map_ptr_->AddCloud(trans_cloud_DS_ptr);
+
+              last_keyframe_pose_ = curr_state_.pose;
+              keyframe_count_++;
+            }
           }
-        }
-      },
-      "update voxel map");
+        },
+        "update voxel map");
+  }
 
   lidar_frame_count_++;
 
@@ -122,8 +125,8 @@ bool LIO::MeasurementUpdate(SensorMeasurement& sensor_measurement) {
   return true;
 }
 
-bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
-                       Eigen::Matrix<double, 15, 1>& delta_x) {
+bool LIO::StepOptimize(const SensorMeasurement &sensor_measurement,
+                       Eigen::Matrix<double, 15, 1> &delta_x) {
   Eigen::Matrix<double, 15, 15> H = Eigen::Matrix<double, 15, 15>::Zero();
   Eigen::Matrix<double, 15, 1> b = Eigen::Matrix<double, 15, 1>::Zero();
 
@@ -172,11 +175,10 @@ bool LIO::StepOptimize(const SensorMeasurement& sensor_measurement,
   return true;
 }
 
-bool LIO::GNStep(const SensorMeasurement& sensor_measurement,
-                 Eigen::Matrix<double, 15, 15>& H,
-                 Eigen::Matrix<double, 15, 1>& b,
-                 const double y0,
-                 Eigen::Matrix<double, 15, 1>& delta_x) {
+bool LIO::GNStep(const SensorMeasurement &sensor_measurement,
+                 Eigen::Matrix<double, 15, 15> &H,
+                 Eigen::Matrix<double, 15, 1> &b, const double y0,
+                 Eigen::Matrix<double, 15, 1> &delta_x) {
   timer.Evaluate(
       [&, this]() {
         // The function inverse() has better numerical stability
@@ -195,8 +197,8 @@ bool LIO::GNStep(const SensorMeasurement& sensor_measurement,
   return true;
 }
 
-double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
-                                     Eigen::Matrix<double, 15, 1>& b) {
+double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15> &H,
+                                     Eigen::Matrix<double, 15, 1> &b) {
   Eigen::Matrix<double, 8, 6> result_matrix =
       Eigen::Matrix<double, 8, 6>::Zero();
   Eigen::Matrix<double, 8, 6> init_matrix = Eigen::Matrix<double, 8, 6>::Zero();
@@ -294,12 +296,11 @@ double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
   size_t N = cloud_cov_ptr_->size();
   correspondences_array_.clear();
   result_matrix = tbb::parallel_reduce(
-      tbb::blocked_range<size_t>(0, N),
-      init_matrix,
+      tbb::blocked_range<size_t>(0, N), init_matrix,
       [&, this](tbb::blocked_range<size_t> r,
                 Eigen::Matrix<double, 8, 6> local_result) {
         for (size_t i = r.begin(); i < r.end(); ++i) {
-          const PointCovType& point_cov = cloud_cov_ptr_->points[i];
+          const PointCovType &point_cov = cloud_cov_ptr_->points[i];
           const Eigen::Vector3d mean_A =
               point_cov.getVector3fMap().cast<double>();
           const Eigen::Vector3d trans_mean_A =
@@ -318,8 +319,8 @@ double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
             Eigen::Vector3d nearby_point =
                 trans_mean_A + voxel_map_ptr_->delta_P_[i];
             size_t hash_idx = voxel_map_ptr_->ComputeHashIndex(nearby_point);
-            if (voxel_map_ptr_->GetCentroidAndCovariance(
-                    hash_idx, mean_B, cov_B) &&
+            if (voxel_map_ptr_->GetCentroidAndCovariance(hash_idx, mean_B,
+                                                         cov_B) &&
                 voxel_map_ptr_->IsSameGrid(nearby_point, mean_B)) {
               Eigen::Matrix3d mahalanobis =
                   (cov_B +
@@ -419,8 +420,8 @@ double LIO::ConstructGICPConstraints(Eigen::Matrix<double, 15, 15>& H,
   return result_matrix(7, 0);
 }
 
-double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
-                                            Eigen::Matrix<double, 15, 1>& b) {
+double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15> &H,
+                                            Eigen::Matrix<double, 15, 1> &b) {
   Eigen::Matrix<double, 8, 6> result_matrix =
       Eigen::Matrix<double, 8, 6>::Zero();
   Eigen::Matrix<double, 8, 6> init_matrix = Eigen::Matrix<double, 8, 6>::Zero();
@@ -437,7 +438,7 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
                 curr_state_.pose.block<3, 3>(0, 0) *
                     correspondences_array_[i]->mean_A +
                 curr_state_.pose.block<3, 1>(0, 3);
-            const Eigen::Vector4d& plane_coeff =
+            const Eigen::Vector4d &plane_coeff =
                 correspondences_array_[i]->plane_coeff;
 
             double error =
@@ -484,8 +485,7 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
   size_t N = cloud_cov_ptr_->size();
   correspondences_array_.clear();
   result_matrix = tbb::parallel_reduce(
-      tbb::blocked_range<size_t>(0, N),
-      init_matrix,
+      tbb::blocked_range<size_t>(0, N), init_matrix,
       [&, this](tbb::blocked_range<size_t> r,
                 Eigen::Matrix<double, 8, 6> local_result) {
         for (size_t i = r.begin(); i < r.end(); ++i) {
@@ -553,8 +553,8 @@ double LIO::ConstructPoint2PlaneConstraints(Eigen::Matrix<double, 15, 15>& H,
   return result_matrix(7, 0);
 }
 
-double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
-                                         Eigen::Matrix<double, 15, 1>& b) {
+double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15> &H,
+                                         Eigen::Matrix<double, 15, 1> &b) {
   Sophus::SO3d ori_diff =
       Sophus::SO3d(prev_state_.pose.block<3, 3>(0, 0).transpose() *
                    curr_state_.pose.block<3, 3>(0, 0));
@@ -588,24 +588,15 @@ double LIO::ConstructImuPriorConstraints(Eigen::Matrix<double, 15, 15>& H,
   return errors;
 }
 
-bool LIO::Predict(const double time,
-                  const Eigen::Vector3d& acc_1,
-                  const Eigen::Vector3d& gyr_1) {
+bool LIO::Predict(const double time, const Eigen::Vector3d &acc_1,
+                  const Eigen::Vector3d &gyr_1) {
   double dt = time - lio_time_;
 
   Eigen::Vector3d un_acc = Eigen::Vector3d::Zero();
   Eigen::Vector3d un_gyr = Eigen::Vector3d::Zero();
 
-  NominalStateUpdate(dt,
-                     acc_0_,
-                     acc_1,
-                     gyr_0_,
-                     gyr_1,
-                     prev_state_.pose,
-                     prev_state_.vel,
-                     curr_state_.pose,
-                     curr_state_.vel,
-                     un_acc,
+  NominalStateUpdate(dt, acc_0_, acc_1, gyr_0_, gyr_1, prev_state_.pose,
+                     prev_state_.vel, curr_state_.pose, curr_state_.vel, un_acc,
                      un_gyr);
 
   ErrorStateUpdate(dt, acc_0_, acc_1, gyr_0_, gyr_1);
@@ -630,17 +621,14 @@ bool LIO::Predict(const double time,
   return true;
 }
 
-bool LIO::NominalStateUpdate(const double dt,
-                             const Eigen::Vector3d& acc_0,
-                             const Eigen::Vector3d& acc_1,
-                             const Eigen::Vector3d& gyr_0,
-                             const Eigen::Vector3d& gyr_1,
-                             const Eigen::Matrix4d& T_prev,
-                             const Eigen::Vector3d& vel_prev,
-                             Eigen::Matrix4d& T_curr,
-                             Eigen::Vector3d& vel_curr,
-                             Eigen::Vector3d& un_acc,
-                             Eigen::Vector3d& un_gyr) {
+bool LIO::NominalStateUpdate(const double dt, const Eigen::Vector3d &acc_0,
+                             const Eigen::Vector3d &acc_1,
+                             const Eigen::Vector3d &gyr_0,
+                             const Eigen::Vector3d &gyr_1,
+                             const Eigen::Matrix4d &T_prev,
+                             const Eigen::Vector3d &vel_prev,
+                             Eigen::Matrix4d &T_curr, Eigen::Vector3d &vel_curr,
+                             Eigen::Vector3d &un_acc, Eigen::Vector3d &un_gyr) {
   // update ori
   un_gyr = 0.5 * (gyr_0 + gyr_1) - curr_state_.bg;
   T_curr.block<3, 3>(0, 0) =
@@ -661,11 +649,10 @@ bool LIO::NominalStateUpdate(const double dt,
   return true;
 }
 
-bool LIO::ErrorStateUpdate(const double dt,
-                           const Eigen::Vector3d& acc_0,
-                           const Eigen::Vector3d& acc_1,
-                           const Eigen::Vector3d& gyr_0,
-                           const Eigen::Vector3d& gyr_1) {
+bool LIO::ErrorStateUpdate(const double dt, const Eigen::Vector3d &acc_0,
+                           const Eigen::Vector3d &acc_1,
+                           const Eigen::Vector3d &gyr_0,
+                           const Eigen::Vector3d &gyr_1) {
   Eigen::Vector3d w = 0.5 * (gyr_0 + gyr_1) - curr_state_.bg;
   Eigen::Vector3d a0 = acc_0 - curr_state_.ba;
   Eigen::Vector3d a1 = acc_1 - curr_state_.ba;
@@ -683,7 +670,7 @@ bool LIO::ErrorStateUpdate(const double dt,
   F_.block<3, 3>(IndexErrorVel, IndexErrorOri) =
       -0.5 * dt * prev_state_.pose.block<3, 3>(0, 0) * a0_x -
       0.5 * dt * curr_state_.pose.block<3, 3>(0, 0) * a1_x *
-          I_w_x;  // More accurate than above
+          I_w_x; // More accurate than above
   F_.block<3, 3>(IndexErrorVel, IndexErrorVel) = Eigen::Matrix3d::Identity();
   F_.block<3, 3>(IndexErrorVel, IndexErrorBiasAcc) =
       -0.5 *
@@ -706,7 +693,7 @@ bool LIO::ErrorStateUpdate(const double dt,
   // F_.block<3,3>(IndexErrorOri,IndexErrorOri) = Eigen::Matrix3d::Identity()
   // - w_x * dt;
   F_.block<3, 3>(IndexErrorOri, IndexErrorOri) =
-      I_w_x;  // More accurate than above
+      I_w_x; // More accurate than above
   F_.block<3, 3>(IndexErrorOri, IndexErrorBiasGyr) =
       -Eigen::Matrix3d::Identity() * dt;
 
@@ -726,7 +713,7 @@ bool LIO::ErrorStateUpdate(const double dt,
       B_.block<3, 3>(IndexErrorVel, IndexNoiseGyrLast);
 
   B_.block<3, 3>(IndexErrorOri, IndexNoiseGyrLast) =
-      0.5 * Eigen::Matrix3d::Identity() * dt;  // inaccuracy
+      0.5 * Eigen::Matrix3d::Identity() * dt; // inaccuracy
   B_.block<3, 3>(IndexErrorOri, IndexNoiseGyrCurr) =
       B_.block<3, 3>(IndexErrorOri, IndexNoiseGyrLast);
 
@@ -751,7 +738,7 @@ bool LIO::ErrorStateUpdate(const double dt,
 // Undistortion based on median integral
 bool LIO::UndistortPointCloud(const double bag_time,
                               const double lidar_end_time,
-                              CloudPtr& cloud_ptr) {
+                              CloudPtr &cloud_ptr) {
   Eigen::Matrix3d R_w_be = curr_state_.pose.block<3, 3>(0, 0);
   Eigen::Vector3d t_w_be = curr_state_.pose.block<3, 1>(0, 3);
   auto it_pt = cloud_ptr->points.end() - 1;
@@ -803,20 +790,19 @@ bool LIO::UndistortPointCloud(const double bag_time,
   return true;
 }
 
-bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
+bool LIO::StaticInitialization(SensorMeasurement &sensor_measurement) {
   if (first_imu_frame_) {
-    const auto& acc = sensor_measurement.imu_buff_.front().linear_acceleration;
-    const auto& gyr = sensor_measurement.imu_buff_.front().angular_velocity;
+    const auto &acc = sensor_measurement.imu_buff_.front().linear_acceleration;
+    const auto &gyr = sensor_measurement.imu_buff_.front().angular_velocity;
     imu_init_buff_.emplace_back(Eigen::Vector3d(acc.x, acc.y, acc.z),
                                 Eigen::Vector3d(gyr.x, gyr.y, gyr.z));
   }
 
-  for (const auto& imu_msg : sensor_measurement.imu_buff_) {
+  for (const auto &imu_msg : sensor_measurement.imu_buff_) {
     Eigen::Vector3d acc(imu_msg.linear_acceleration.x,
                         imu_msg.linear_acceleration.y,
                         imu_msg.linear_acceleration.z);
-    Eigen::Vector3d gyr(imu_msg.angular_velocity.x,
-                        imu_msg.angular_velocity.y,
+    Eigen::Vector3d gyr(imu_msg.angular_velocity.x, imu_msg.angular_velocity.y,
                         imu_msg.angular_velocity.z);
 
     imu_init_buff_.emplace_back(acc, gyr);
@@ -828,17 +814,13 @@ bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
 
   Eigen::Vector3d acc_cov, gyr_cov;
   ComputeMeanAndCovDiag(
-      imu_init_buff_,
-      mean_acc_,
-      acc_cov,
-      [](const std::pair<Eigen::Vector3d, Eigen::Vector3d>& imu_data) {
+      imu_init_buff_, mean_acc_, acc_cov,
+      [](const std::pair<Eigen::Vector3d, Eigen::Vector3d> &imu_data) {
         return imu_data.first;
       });
   ComputeMeanAndCovDiag(
-      imu_init_buff_,
-      mean_gyr_,
-      gyr_cov,
-      [](const std::pair<Eigen::Vector3d, Eigen::Vector3d>& imu_data) {
+      imu_init_buff_, mean_gyr_, gyr_cov,
+      [](const std::pair<Eigen::Vector3d, Eigen::Vector3d> &imu_data) {
         return imu_data.second;
       });
 
@@ -862,10 +844,8 @@ bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
 
   Eigen::Vector3d init_ba = Eigen::Vector3d::Zero();
   ComputeMeanAndCovDiag(
-      imu_init_buff_,
-      init_ba,
-      acc_cov,
-      [this](const std::pair<Eigen::Vector3d, Eigen::Vector3d>& imu_data) {
+      imu_init_buff_, init_ba, acc_cov,
+      [this](const std::pair<Eigen::Vector3d, Eigen::Vector3d> &imu_data) {
         Eigen::Vector3d temp_ba =
             imu_data.first -
             curr_state_.pose.block<3, 3>(0, 0).transpose() * g_;
@@ -916,11 +896,32 @@ bool LIO::StaticInitialization(SensorMeasurement& sensor_measurement) {
             << " init_ba: " << init_ba.transpose() << ", ori: " << std::endl
             << curr_state_.pose.block<3, 3>(0, 0);
 
+  // 利用该初始pose 将 lidar 转到 imu系，再转到IMU0系（即惯性系）,并保存
+  CloudPtr cloud_body_ptr(new CloudType());
+  pcl::transformPointCloud(*sensor_measurement.cloud_ptr_, *cloud_body_ptr,
+                           config_.T_imu_lidar);
+  pcl::transformPointCloud(*cloud_body_ptr, *sensor_measurement.cloud_ptr_,
+                           curr_state_.pose);
+
+  // save pcd
+  if (!config_.init_ok) {
+    std::string pcd_file = config_.save_path + "/init.pcd";
+    pcl::io::savePCDFileASCII(pcd_file, *sensor_measurement.cloud_ptr_);
+    LOG(INFO) << "save pcd file: " << pcd_file;
+
+    // save the pose now
+    std::string pose_file = config_.save_path + "/init_pose.txt";
+    std::ofstream pose_ofs(pose_file);
+    pose_ofs << curr_state_.pose << std::endl;
+    pose_ofs.close();
+    LOG(INFO) << "save pose file: " << pose_file;
+  }
+
   return true;
 }
 
-bool LIO::AHRSInitialization(SensorMeasurement& sensor_measurement) {
-  const auto& back_imu = sensor_measurement.imu_buff_.back();
+bool LIO::AHRSInitialization(SensorMeasurement &sensor_measurement) {
+  const auto &back_imu = sensor_measurement.imu_buff_.back();
 
   if ((back_imu.orientation.w * back_imu.orientation.w +
        back_imu.orientation.x * back_imu.orientation.x +
@@ -930,10 +931,8 @@ bool LIO::AHRSInitialization(SensorMeasurement& sensor_measurement) {
     return false;
   }
 
-  Eigen::Quaterniond temp_q(back_imu.orientation.w,
-                            back_imu.orientation.x,
-                            back_imu.orientation.y,
-                            back_imu.orientation.z);
+  Eigen::Quaterniond temp_q(back_imu.orientation.w, back_imu.orientation.x,
+                            back_imu.orientation.y, back_imu.orientation.z);
 
   curr_state_.pose.block<3, 3>(0, 0) = temp_q.toRotationMatrix();
 
@@ -979,9 +978,9 @@ bool LIO::AHRSInitialization(SensorMeasurement& sensor_measurement) {
   return true;
 }
 
-bool LIO::CorrectState(const State& state,
-                       const Eigen::Matrix<double, 15, 1>& delta_x,
-                       State& corrected_state) {
+bool LIO::CorrectState(const State &state,
+                       const Eigen::Matrix<double, 15, 1> &delta_x,
+                       State &corrected_state) {
   // ori
   Eigen::Matrix3d delta_R =
       Sophus::SO3d::exp(delta_x.block<3, 1>(IndexErrorOri, 0)).matrix();
@@ -1003,7 +1002,7 @@ bool LIO::CorrectState(const State& state,
   return true;
 }
 
-bool LIO::ComputeFinalCovariance(const Eigen::Matrix<double, 15, 1>& delta_x) {
+bool LIO::ComputeFinalCovariance(const Eigen::Matrix<double, 15, 1> &delta_x) {
   Eigen::Matrix<double, 15, 15> temp_P = final_hessian_.inverse();
 
   // project covariance
@@ -1015,6 +1014,13 @@ bool LIO::ComputeFinalCovariance(const Eigen::Matrix<double, 15, 1>& delta_x) {
   return true;
 }
 
-bool LIO::IsConverged(const Eigen::Matrix<double, 15, 1>& delta_x) {
+bool LIO::IsConverged(const Eigen::Matrix<double, 15, 1> &delta_x) {
   return delta_x.lpNorm<Eigen::Infinity>() < transformation_epsilon_;
+}
+
+void LIO::SetPriorMap(pcl::PointCloud<PointType>::Ptr prior_map_ptr) {
+  // 结合初始惯性系 到 地图系的坐标变换，将prior_map_ptr转到惯性系下
+  pcl::transformPointCloud(*prior_map_ptr, *prior_map_ptr,
+                           init_pose_map2world_);
+  voxel_map_ptr_->SetPriorMap(prior_map_ptr);
 }

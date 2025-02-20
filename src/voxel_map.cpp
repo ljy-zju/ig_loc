@@ -1,4 +1,4 @@
-#include "ig_lio/voxel_map.h"
+#include "ig_loc/voxel_map.h"
 
 VoxelMap::VoxelMap(Config config) {
   resolution_ = config.resolution;
@@ -75,7 +75,7 @@ VoxelMap::VoxelMap(Config config) {
   temp_voxel_array_ptr_ = std::make_shared<MyVector>();
 }
 
-bool VoxelMap::AddCloud(const CloudPtr& input_cloud_ptr) {
+bool VoxelMap::AddCloud(const CloudPtr &input_cloud_ptr) {
   if (input_cloud_ptr->empty()) {
     LOG(INFO) << "input cloud is empty";
     return false;
@@ -188,8 +188,7 @@ bool VoxelMap::AddCloud(const CloudPtr& input_cloud_ptr) {
           if (iter->second->second->points_num_ < grid_max_points_) {
             iter->second->second->points_array_.insert(
                 iter->second->second->points_array_.end(),
-                points_array_temp.begin(),
-                points_array_temp.end());
+                points_array_temp.begin(), points_array_temp.end());
           }
         }
 
@@ -205,15 +204,15 @@ bool VoxelMap::AddCloud(const CloudPtr& input_cloud_ptr) {
   return true;
 }
 
-void VoxelMap::ComputeCovariance(std::shared_ptr<Grid>& grid_ptr) {
+void VoxelMap::ComputeCovariance(std::shared_ptr<Grid> &grid_ptr) {
   if (grid_ptr->points_num_ >= 6) {
     Eigen::Matrix3d covariance =
         (grid_ptr->cov_sum_ -
          grid_ptr->points_sum_ * grid_ptr->centroid_.transpose()) /
         (static_cast<double>(grid_ptr->points_num_) - 1.0);
 
-    Eigen::JacobiSVD<Eigen::Matrix3d> svd(
-        covariance, Eigen::ComputeFullU | Eigen::ComputeFullV);
+    Eigen::JacobiSVD<Eigen::Matrix3d> svd(covariance, Eigen::ComputeFullU |
+                                                          Eigen::ComputeFullV);
 
     Eigen::Vector3d values(1, 1, 1e-3);
     Eigen::Matrix3d modified_cov =
@@ -228,15 +227,14 @@ void VoxelMap::ComputeCovariance(std::shared_ptr<Grid>& grid_ptr) {
   }
 }
 
-bool VoxelMap::KNNByCondition(const Eigen::Vector3d& point,
-                              const size_t K,
+bool VoxelMap::KNNByCondition(const Eigen::Vector3d &point, const size_t K,
                               const double range,
-                              std::vector<Eigen::Vector3d>& results) {
+                              std::vector<Eigen::Vector3d> &results) {
   std::vector<point_distance> point_dist;
   point_dist.reserve(delta_P_.size() * grid_max_points_);
   double range2 = range * range;
 
-  for (const auto& delta : delta_P_) {
+  for (const auto &delta : delta_P_) {
     Eigen::Vector3d nearby_point = point + delta;
     size_t hash_idx = ComputeHashIndex(nearby_point);
     Eigen::Vector3d centroid;
@@ -244,7 +242,7 @@ bool VoxelMap::KNNByCondition(const Eigen::Vector3d& point,
     auto iter = voxel_map_.find(hash_idx);
     if (iter != voxel_map_.end() &&
         IsSameGrid(nearby_point, iter->second->second->centroid_)) {
-      for (const auto& p : iter->second->second->points_array_) {
+      for (const auto &p : iter->second->second->points_array_) {
         double dist = (point - p).squaredNorm();
 
         if (dist < range2) {
@@ -260,22 +258,22 @@ bool VoxelMap::KNNByCondition(const Eigen::Vector3d& point,
   }
 
   if (point_dist.size() > K) {
-    std::nth_element(
-        point_dist.begin(), point_dist.begin() + K - 1, point_dist.end());
+    std::nth_element(point_dist.begin(), point_dist.begin() + K - 1,
+                     point_dist.end());
     point_dist.resize(K);
   }
   std::nth_element(point_dist.begin(), point_dist.begin(), point_dist.end());
 
   results.clear();
-  for (const auto& it : point_dist) {
+  for (const auto &it : point_dist) {
     results.emplace_back(it.point_);
   }
   return true;
 }
 
 bool VoxelMap::GetCentroidAndCovariance(const size_t hash_idx,
-                                        Eigen::Vector3d& centorid,
-                                        Eigen::Matrix3d& cov) {
+                                        Eigen::Vector3d &centorid,
+                                        Eigen::Matrix3d &cov) {
   auto iter = voxel_map_.find(hash_idx);
   if (iter != voxel_map_.end() && iter->second->second->is_valid_) {
     centorid = iter->second->second->centroid_;
@@ -286,7 +284,7 @@ bool VoxelMap::GetCentroidAndCovariance(const size_t hash_idx,
   }
 }
 
-size_t VoxelMap::ComputeHashIndex(const Eigen::Vector3d& point) {
+size_t VoxelMap::ComputeHashIndex(const Eigen::Vector3d &point) {
   double loc_xyz[3];
   for (size_t i = 0; i < 3; ++i) {
     loc_xyz[i] = point[i] * inv_resolution_;
@@ -302,8 +300,8 @@ size_t VoxelMap::ComputeHashIndex(const Eigen::Vector3d& point) {
   return ((((z)*HASH_P_) % MAX_N_ + (y)) * HASH_P_) % MAX_N_ + (x);
 }
 
-bool VoxelMap::IsSameGrid(const Eigen::Vector3d& p1,
-                          const Eigen::Vector3d& p2) {
+bool VoxelMap::IsSameGrid(const Eigen::Vector3d &p1,
+                          const Eigen::Vector3d &p2) {
   int hx_1 = floor(p1.x() * inv_resolution_);
   int hy_1 = floor(p1.y() * inv_resolution_);
   int hz_1 = floor(p1.z() * inv_resolution_);
@@ -312,4 +310,13 @@ bool VoxelMap::IsSameGrid(const Eigen::Vector3d& p1,
   int hz_2 = floor(p2.z() * inv_resolution_);
 
   return ((hx_1 == hx_2) && (hy_1 == hy_2) && (hz_1 == hz_2));
+}
+
+bool VoxelMap::SetPriorMap(pcl::PointCloud<PointType>::Ptr prior_map_ptr) {
+  if (prior_map_ptr->empty()) {
+    LOG(INFO) << "input prior map is empty";
+    return false;
+  }
+  AddCloud(prior_map_ptr);
+  return true;
 }

@@ -16,10 +16,9 @@
 #include "point_type.h"
 
 class FasterVoxelGrid {
- public:
+public:
   FasterVoxelGrid(double resolution)
-      : resolution_(resolution)
-      , inv_resolution_(1.0 / resolution) {
+      : resolution_(resolution), inv_resolution_(1.0 / resolution) {
     voxel_map_ptr_ = std::make_shared<MyHashMap>();
     voxel_array_ptr_ = std::make_shared<MyVector>();
 
@@ -35,11 +34,10 @@ class FasterVoxelGrid {
     }
   };
 
-  void Filter(const CloudPtr& input_cloud_ptr,
-              CloudPtr& cloud_DS_ptr,
-              CloudCovPtr& cloud_cov_ptr);
+  void Filter(const CloudPtr &input_cloud_ptr, CloudPtr &cloud_DS_ptr,
+              CloudCovPtr &cloud_cov_ptr);
 
-  size_t ComputeHashIndex(const Eigen::Vector3d& point);
+  size_t ComputeHashIndex(const Eigen::Vector3d &point);
 
   double resolution_{1.0};
   double inv_resolution_{1.0};
